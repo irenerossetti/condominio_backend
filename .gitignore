@@ -1,6 +1,6 @@
 # venv / bytecode
 .venv/
-**/__pycache__/
+__pycache__/
 *.py[cod]
 
 # env y DB local

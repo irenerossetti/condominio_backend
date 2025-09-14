@@ -1,8 +1,7 @@
-from django.urls import path#, include
+# core/urls.py
+from django.urls import path
 from .views import LoginView
 
 urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='auth-login'),
-   # path("api/", include("todos.urls")),
-
 ]

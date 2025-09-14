@@ -27,5 +27,6 @@ urlpatterns = [
     path("api/reports/finance/", v.FinanceReportView.as_view()),  # <-- NUEVO
     # Rutas de DRF y apps
     path("api/", include(router.urls)),
+    path("api/", include("core.urls")),
   #  path("api/", include("todos.urls")),
 ]
