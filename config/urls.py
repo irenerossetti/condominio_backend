@@ -1,22 +1,31 @@
-"""
-URL configuration for config project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
+# config/urls.py
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+from core import views as v
+
+router = DefaultRouter()
+router.register(r"me", v.MeViewSet, basename="me")
+router.register(r"users", v.UserViewSet)
+router.register(r"units", v.UnitViewSet)   
+router.register(r"expense-types", v.ExpenseTypeViewSet)
+router.register(r"fees", v.FeeViewSet)
+router.register(r"notices", v.NoticeViewSet)
+
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path("admin/", admin.site.urls),
+
+    # Login propio
+    path("api/auth/login/", v.LoginView.as_view()),
+
+    # Opcional: endpoints de SimpleJWT (útiles para pruebas)
+    path("api/auth/token/", TokenObtainPairView.as_view()),
+    path("api/auth/refresh/", TokenRefreshView.as_view()),
+    path("api/reports/finance/", v.FinanceReportView.as_view()),  # <-- NUEVO
+    # Rutas de DRF y apps
+    path("api/", include(router.urls)),
+  #  path("api/", include("todos.urls")),
 ]
