@@ -289,6 +289,7 @@ class ReservationViewSet(viewsets.ModelViewSet):
         # Asigna la reserva al usuario que la está creando
         serializer.save(user=self.request.user)
 
+# En core/views.py
 class MaintenanceRequestViewSet(viewsets.ModelViewSet):
     queryset = MaintenanceRequest.objects.all().order_by('-created_at')
     serializer_class = MaintenanceRequestSerializer
@@ -296,9 +297,26 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if not (user.is_staff or getattr(user, 'profile', {}).get('role') == 'ADMIN'):
+        # Si el usuario NO es admin, solo ve sus propias solicitudes
+        if not (user.is_staff or getattr(user.profile, 'role', 'RESIDENT') == 'ADMIN'):
             return self.queryset.filter(reported_by=user)
+        # Si es admin, ve todo
         return self.queryset
 
     def perform_create(self, serializer):
-        serializer.save(reported_by=self.request.user)        
+        serializer.save(reported_by=self.request.user)
+
+    # --- ACCIÓN NUEVA PARA ADMINS ---
+    @action(detail=True, methods=['patch'], permission_classes=[IsAdmin])
+    def update_status(self, request, pk=None):
+        instance = self.get_object()
+        new_status = request.data.get('status')
+
+        # Valida que el estado sea uno de los permitidos
+        valid_statuses = [choice[0] for choice in MaintenanceRequest.STATUS_CHOICES]
+        if new_status not in valid_statuses:
+            return Response({'detail': 'Estado no válido.'}, status=400)
+
+        instance.status = new_status
+        instance.save(update_fields=['status'])
+        return Response(self.get_serializer(instance).data)
