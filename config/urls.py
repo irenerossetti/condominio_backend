@@ -13,7 +13,9 @@ router.register(r"units", v.UnitViewSet)
 router.register(r"expense-types", v.ExpenseTypeViewSet)
 router.register(r"fees", v.FeeViewSet)
 router.register(r"notices", v.NoticeViewSet)
-
+router.register(r"common-areas", v.CommonAreaViewSet)
+router.register(r"reservations", v.ReservationViewSet)
+router.register(r"maintenance-requests", v.MaintenanceRequestViewSet)
 
 urlpatterns = [
     path("admin/", admin.site.urls),

@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Profile, Unit
+from .models import Profile, Unit, ExpenseType, Fee, Payment, Notice, CommonArea, Reservation, MaintenanceRequest
 
 User = get_user_model()
 
@@ -134,3 +134,31 @@ class NoticeSerializer(serializers.ModelSerializer):
         fields = ["id", "title", "body", "published_at", "created_by", "created_by_username"]
         read_only_fields = ["id", "published_at", "created_by", "created_by_username"]
 
+# ... al final de core/serializers.py
+from .models import CommonArea, Reservation # Añadir a los imports
+
+class CommonAreaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CommonArea
+        fields = ["id", "name", "description", "capacity", "is_active"]
+
+class ReservationSerializer(serializers.ModelSerializer):
+    area_name = serializers.CharField(source="area.name", read_only=True)
+    user_username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = Reservation
+        fields = [
+            "id", "area", "area_name", "user", "user_username",
+            "start_time", "end_time", "notes", "created_at"
+        ]
+        read_only_fields = ["user", "created_at"] # El usuario se asigna automáticamente
+
+class MaintenanceRequestSerializer(serializers.ModelSerializer):
+    unit_code = serializers.CharField(source="unit.code", read_only=True)
+    reported_by_username = serializers.CharField(source="reported_by.username", read_only=True)
+
+    class Meta:
+        model = MaintenanceRequest
+        fields = '__all__'
+        read_only_fields = ['reported_by']        

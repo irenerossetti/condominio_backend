@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import Profile, Unit, ExpenseType, Fee, Payment, Notice
+from .models import MaintenanceRequest # <-- Añadir
 
 @admin.register(ExpenseType)
 class ExpenseTypeAdmin(admin.ModelAdmin):
@@ -34,3 +35,29 @@ class ProfileAdmin(admin.ModelAdmin):
     list_display = ("id", "user", "full_name", "phone", "role")
     list_filter = ("role",)
     search_fields = ("full_name", "user__username", "user__email")
+
+# ... al inicio del archivo, modifica la línea de importación de models
+from .models import (
+    Profile, Unit, ExpenseType, Fee, Payment, Notice,
+    CommonArea, Reservation  # <-- Añade CommonArea y Reservation
+)
+
+# ... (Aquí van los @admin.register que ya tenías) ...
+
+# ... Añade estas clases al final del archivo
+@admin.register(CommonArea)
+class CommonAreaAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "capacity", "is_active")
+    list_filter = ("is_active",)
+    search_fields = ("name",)
+
+@admin.register(Reservation)
+class ReservationAdmin(admin.ModelAdmin):
+    list_display = ("id", "area", "user", "start_time", "end_time")
+    list_filter = ("area",)
+    search_fields = ("user__username", "notes")
+
+@admin.register(MaintenanceRequest)
+class MaintenanceRequestAdmin(admin.ModelAdmin):
+    list_display = ('title', 'status', 'unit', 'reported_by', 'created_at')
+    list_filter = ('status', 'unit')    

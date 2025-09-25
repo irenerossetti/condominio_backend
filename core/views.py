@@ -11,11 +11,13 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import (
     UserSerializer, ProfileSerializer, MeSerializer,
     UserWithProfileSerializer, AdminUserWriteSerializer, UnitSerializer,
-    ExpenseTypeSerializer, FeeSerializer, PaymentSerializer, NoticeSerializer,
+    ExpenseTypeSerializer, FeeSerializer, PaymentSerializer, NoticeSerializer, 
+    CommonAreaSerializer, ReservationSerializer, MaintenanceRequestSerializer
 )
-from .models import Profile, Unit, ExpenseType, Fee, Payment, Notice
+from .models import Profile, Unit, ExpenseType, Fee, Payment, Notice, CommonArea, Reservation, MaintenanceRequest
 from .permissions import IsAdmin
 
+from .permissions import IsAdmin, IsOwnerOrAdmin 
 User = get_user_model()
 
 # --- Login ---
@@ -261,3 +263,42 @@ class FinanceReportView(APIView):
             "by_period": by_period,
             "by_type": by_type,
         })
+
+class CommonAreaViewSet(viewsets.ModelViewSet):
+    queryset = CommonArea.objects.filter(is_active=True).order_by("name")
+    serializer_class = CommonAreaSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly] # Todos pueden ver, solo admin modifica
+
+    def get_permissions(self):
+        if self.action in ("create", "update", "partial_update", "destroy"):
+            return [IsAdmin()]
+        return super().get_permissions()
+
+class ReservationViewSet(viewsets.ModelViewSet):
+    queryset = Reservation.objects.select_related("area", "user").all()
+    serializer_class = ReservationSerializer
+    permission_classes = [IsOwnerOrAdmin]
+
+    def get_queryset(self):
+        # Un admin ve todo, un residente solo lo suyo
+        if self.request.user.profile.role == "ADMIN":
+            return super().get_queryset().order_by("-start_time")
+        return super().get_queryset().filter(user=self.request.user).order_by("-start_time")
+
+    def perform_create(self, serializer):
+        # Asigna la reserva al usuario que la está creando
+        serializer.save(user=self.request.user)
+
+class MaintenanceRequestViewSet(viewsets.ModelViewSet):
+    queryset = MaintenanceRequest.objects.all().order_by('-created_at')
+    serializer_class = MaintenanceRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not (user.is_staff or getattr(user, 'profile', {}).get('role') == 'ADMIN'):
+            return self.queryset.filter(reported_by=user)
+        return self.queryset
+
+    def perform_create(self, serializer):
+        serializer.save(reported_by=self.request.user)        
