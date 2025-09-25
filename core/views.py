@@ -12,10 +12,9 @@ from .serializers import (
     UserSerializer, ProfileSerializer, MeSerializer,
     UserWithProfileSerializer, AdminUserWriteSerializer, UnitSerializer,
     ExpenseTypeSerializer, FeeSerializer, PaymentSerializer, NoticeSerializer, 
-    CommonAreaSerializer, ReservationSerializer, MaintenanceRequestSerializer
+    CommonAreaSerializer, ReservationSerializer, MaintenanceRequestSerializer, ActivityLogSerializer
 )
-from .models import Profile, Unit, ExpenseType, Fee, Payment, Notice, CommonArea, Reservation, MaintenanceRequest
-from .permissions import IsAdmin
+from .models import     Profile, Unit, ExpenseType, Fee, Payment, Notice, CommonArea, Reservation, MaintenanceRequest, ActivityLog
 
 from .permissions import IsAdmin, IsOwnerOrAdmin 
 User = get_user_model()
@@ -49,14 +48,13 @@ class LoginView(APIView):
         user = authenticate(request, username=username, password=password)
         if not user:
             return Response({"detail": "Credenciales inválidas"}, status=401)
-
+        ActivityLog.objects.create(user=user, action="USER_LOGIN_SUCCESS")
         refresh = RefreshToken.for_user(user)
         return Response({
             "access": str(refresh.access_token),
             "refresh": str(refresh),
             "user": {"id": user.id, "username": user.get_username(), "email": user.email},
         }, status=200)
-
 # --- MeViewSet (ÚNICO) ---
 class MeViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
@@ -103,6 +101,35 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action in ("list", "retrieve"):
             return UserWithProfileSerializer
         return UserSerializer
+
+    # 👈 Nuevo: Registrar acción de creación de usuario
+    def perform_create(self, serializer):
+        user = serializer.save()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="USER_CREATED",
+            details=f"Se creó el usuario con ID: {user.id}"
+        )
+
+    # 👈 Nuevo: Registrar acción de eliminación de usuario
+    def perform_destroy(self, instance):
+        username = instance.username
+        user_id = instance.id
+        instance.delete()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="USER_DELETED",
+            details=f"Se eliminó el usuario: {username} ({user_id})"
+        )
+
+    # 👈 Nuevo: Registrar acción de actualización de usuario
+    def perform_update(self, serializer):
+        user = serializer.save()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="USER_UPDATED",
+            details=f"Se actualizó el usuario con ID: {user.id}"
+        )
 
 
 class UnitViewSet(viewsets.ModelViewSet):
@@ -320,3 +347,58 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
         instance.status = new_status
         instance.save(update_fields=['status'])
         return Response(self.get_serializer(instance).data)
+    
+# Al final de core/views.py
+
+class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet para que los administradores vean el registro de actividad.
+    Es de solo lectura.
+    """
+    queryset = ActivityLog.objects.all()
+    serializer_class = ActivityLogSerializer
+    permission_classes = [IsAdmin]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['user__username', 'action', 'details']
+    ordering_fields = ['timestamp']    
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAdmin])
+    def create_custom(self, request):
+        action = request.data.get('action')
+        details = request.data.get('details')
+        if not action:
+            return Response({"detail": "El campo 'action' es requerido."}, status=400)
+        
+        log = ActivityLog.objects.create(
+            user=request.user,
+            action=action,
+            details=details,
+        )
+        return Response(self.get_serializer(log).data, status=201)
+    
+# ... (otras clases de views) ...
+
+class LogoutView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        ActivityLog.objects.create(user=user, action="USER_LOGOUT")
+        return Response({"detail": "Sesión cerrada correctamente."})
+
+# ... (al final del archivo) ...
+
+class PageAccessLogView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        page_name = request.data.get('page_name')
+        if not page_name:
+            return Response({"detail": "El nombre de la página es requerido."}, status=400)
+            
+        ActivityLog.objects.create(
+            user=request.user,
+            action="PAGE_ACCESS",
+            details=f"Accedió a la página: {page_name}"
+        )
+        return Response({"status": "Registro de acceso a página exitoso."}, status=201)

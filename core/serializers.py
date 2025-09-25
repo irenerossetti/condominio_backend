@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Profile, Unit, ExpenseType, Fee, Payment, Notice, CommonArea, Reservation, MaintenanceRequest
+from .models import Profile, Unit, ExpenseType, Fee, Payment, Notice, CommonArea, Reservation, MaintenanceRequest, ActivityLog
 
 User = get_user_model()
 
@@ -162,3 +162,11 @@ class MaintenanceRequestSerializer(serializers.ModelSerializer):
         model = MaintenanceRequest
         fields = '__all__'
         read_only_fields = ['reported_by']        
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = ActivityLog
+        fields = ["id", "user", "user_username", "action", "timestamp", "details"]
+        read_only_fields = ["id", "user", "user_username", "timestamp", "action", "details"]

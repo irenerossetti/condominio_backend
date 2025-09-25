@@ -16,13 +16,16 @@ router.register(r"notices", v.NoticeViewSet)
 router.register(r"common-areas", v.CommonAreaViewSet)
 router.register(r"reservations", v.ReservationViewSet)
 router.register(r"maintenance-requests", v.MaintenanceRequestViewSet)
+# En config/urls.py, dentro de los registros del router
+router.register(r"activity-logs", v.ActivityLogViewSet, basename="activitylog")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
 
     # Login propio
     path("api/auth/login/", v.LoginView.as_view()),
-
+    path("api/auth/logout/", v.LogoutView.as_view(), name='auth-logout'), # 👈 Nueva línea
+    path("api/log/page-access/", v.PageAccessLogView.as_view(), name='page-access-log'), # 👈 Nueva ruta
     # Opcional: endpoints de SimpleJWT (útiles para pruebas)
     path("api/auth/token/", TokenObtainPairView.as_view()),
     path("api/auth/refresh/", TokenRefreshView.as_view()),
