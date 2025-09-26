@@ -1,6 +1,9 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Profile, Unit, ExpenseType, Fee, Payment, Notice, CommonArea, Reservation, MaintenanceRequest, ActivityLog
+from .models import (
+    Profile, Unit, ExpenseType, Fee, Payment, Notice,
+    CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment
+)
 
 User = get_user_model()
 
@@ -27,16 +30,13 @@ class MeSerializer(serializers.Serializer):
     last_name = serializers.CharField(allow_blank=True)
     profile = ProfileSerializer(allow_null=True)
 
-# --- CU3: usuarios con perfil (lectura) ---
 class UserWithProfileSerializer(UserSerializer):
     profile = ProfileSerializer(read_only=True, allow_null=True)
 
     class Meta(UserSerializer.Meta):
         fields = UserSerializer.Meta.fields + ["profile"]
 
-# ---CU3 escritura de admin (crear/editar usuario + perfil + password) ---
 class AdminUserWriteSerializer(serializers.ModelSerializer):
-    # campos de perfil embebidos (opcionales)
     full_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
     role = serializers.ChoiceField(write_only=True, choices=Profile.ROLE_CHOICES, required=False)
@@ -59,7 +59,6 @@ class AdminUserWriteSerializer(serializers.ModelSerializer):
         user.set_password(password or User.objects.make_random_password())
         user.save()
 
-        # Crea/actualiza perfil si se enviaron campos
         defaults = {k: v for k, v in profile_data.items() if v is not None}
         if defaults:
             Profile.objects.update_or_create(user=user, defaults=defaults)
@@ -83,7 +82,6 @@ class AdminUserWriteSerializer(serializers.ModelSerializer):
             prof.save()
         return instance
 
-# --- CU4 Units ---
 class UnitSerializer(serializers.ModelSerializer):
     owner_username = serializers.SerializerMethodField(read_only=True)
 
@@ -95,9 +93,6 @@ class UnitSerializer(serializers.ModelSerializer):
     def get_owner_username(self, obj):
         return getattr(obj.owner, "username", None)
     
-# --- EXPENSAS ---
-from .models import ExpenseType, Fee, Payment, Notice  # asegúrate de tenerlo
-
 class ExpenseTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExpenseType
@@ -125,7 +120,6 @@ class FeeSerializer(serializers.ModelSerializer):
             "payments",
         ]
 
-# --- AVISOS ---
 class NoticeSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(source="created_by.username", read_only=True)
 
@@ -133,9 +127,6 @@ class NoticeSerializer(serializers.ModelSerializer):
         model = Notice
         fields = ["id", "title", "body", "published_at", "created_by", "created_by_username"]
         read_only_fields = ["id", "published_at", "created_by", "created_by_username"]
-
-# ... al final de core/serializers.py
-from .models import CommonArea, Reservation # Añadir a los imports
 
 class CommonAreaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -152,16 +143,7 @@ class ReservationSerializer(serializers.ModelSerializer):
             "id", "area", "area_name", "user", "user_username",
             "start_time", "end_time", "notes", "created_at"
         ]
-        read_only_fields = ["user", "created_at"] # El usuario se asigna automáticamente
-
-class MaintenanceRequestSerializer(serializers.ModelSerializer):
-    unit_code = serializers.CharField(source="unit.code", read_only=True)
-    reported_by_username = serializers.CharField(source="reported_by.username", read_only=True)
-
-    class Meta:
-        model = MaintenanceRequest
-        fields = '__all__'
-        read_only_fields = ['reported_by']        
+        read_only_fields = ["user", "created_at"]
 
 class ActivityLogSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source="user.username", read_only=True)
@@ -170,3 +152,25 @@ class ActivityLogSerializer(serializers.ModelSerializer):
         model = ActivityLog
         fields = ["id", "user", "user_username", "action", "timestamp", "details"]
         read_only_fields = ["id", "user", "user_username", "timestamp", "action", "details"]
+
+# Mueve la definicion del serializador de comentarios antes de que se use
+class MaintenanceRequestCommentSerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source='user.username', read_only=True)
+
+    class Meta:
+        model = MaintenanceRequestComment
+        fields = ['id', 'request', 'user', 'user_username', 'body', 'created_at']
+        read_only_fields = ['user', 'request']
+
+class MaintenanceRequestSerializer(serializers.ModelSerializer):
+    unit_code = serializers.CharField(source="unit.code", read_only=True)
+    reported_by_username = serializers.CharField(source="reported_by.username", read_only=True)
+    assigned_to_username = serializers.CharField(source="assigned_to.username", read_only=True)
+    completed_by_username = serializers.CharField(source="completed_by.username", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    comments = MaintenanceRequestCommentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = MaintenanceRequest
+        fields = '__all__'
+        read_only_fields = ['reported_by']

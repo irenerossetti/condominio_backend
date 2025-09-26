@@ -7,16 +7,20 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
-
 from .serializers import (
     UserSerializer, ProfileSerializer, MeSerializer,
     UserWithProfileSerializer, AdminUserWriteSerializer, UnitSerializer,
     ExpenseTypeSerializer, FeeSerializer, PaymentSerializer, NoticeSerializer, 
-    CommonAreaSerializer, ReservationSerializer, MaintenanceRequestSerializer, ActivityLogSerializer
+    CommonAreaSerializer, ReservationSerializer, MaintenanceRequestSerializer, ActivityLogSerializer,
+    MaintenanceRequestCommentSerializer
 )
-from .models import     Profile, Unit, ExpenseType, Fee, Payment, Notice, CommonArea, Reservation, MaintenanceRequest, ActivityLog
+from .models import (
+    Profile, Unit, ExpenseType, Fee, Payment, Notice,
+    CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment
+)
+from .permissions import IsAdmin, IsOwnerOrAdmin
+from rest_framework import serializers # Importar serializers para la excepción
 
-from .permissions import IsAdmin, IsOwnerOrAdmin 
 User = get_user_model()
 
 # --- Login ---
@@ -55,11 +59,10 @@ class LoginView(APIView):
             "refresh": str(refresh),
             "user": {"id": user.id, "username": user.get_username(), "email": user.email},
         }, status=200)
-# --- MeViewSet (ÚNICO) ---
+
 class MeViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
-    # GET /api/me/
     def list(self, request):
         u = request.user
         prof = getattr(u, "profile", None)
@@ -69,7 +72,6 @@ class MeViewSet(viewsets.ViewSet):
         }
         return Response(MeSerializer(payload).data)
 
-    # PATCH /api/me/update_profile/
     @action(detail=False, methods=["patch"])
     def update_profile(self, request):
         prof, _ = Profile.objects.get_or_create(user=request.user)
@@ -78,7 +80,6 @@ class MeViewSet(viewsets.ViewSet):
         ser.save()
         return Response(ser.data)
 
-    # GET /api/me/fees/   (CU8)
     @action(detail=False, methods=["get"])
     def fees(self, request):
         qs = Fee.objects.select_related("unit", "expense_type") \
@@ -86,7 +87,6 @@ class MeViewSet(viewsets.ViewSet):
                         .order_by("-issued_at")
         return Response(FeeSerializer(qs, many=True).data)
 
-# --- Users / Units / ExpenseTypes / Fees / Notices (sin cambios funcionales) ---
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by("id")
     permission_classes = [IsAdmin]
@@ -102,7 +102,6 @@ class UserViewSet(viewsets.ModelViewSet):
             return UserWithProfileSerializer
         return UserSerializer
 
-    # 👈 Nuevo: Registrar acción de creación de usuario
     def perform_create(self, serializer):
         user = serializer.save()
         ActivityLog.objects.create(
@@ -111,7 +110,6 @@ class UserViewSet(viewsets.ModelViewSet):
             details=f"Se creó el usuario con ID: {user.id}"
         )
 
-    # 👈 Nuevo: Registrar acción de eliminación de usuario
     def perform_destroy(self, instance):
         username = instance.username
         user_id = instance.id
@@ -122,7 +120,6 @@ class UserViewSet(viewsets.ModelViewSet):
             details=f"Se eliminó el usuario: {username} ({user_id})"
         )
 
-    # 👈 Nuevo: Registrar acción de actualización de usuario
     def perform_update(self, serializer):
         user = serializer.save()
         ActivityLog.objects.create(
@@ -130,7 +127,6 @@ class UserViewSet(viewsets.ModelViewSet):
             action="USER_UPDATED",
             details=f"Se actualizó el usuario con ID: {user.id}"
         )
-
 
 class UnitViewSet(viewsets.ModelViewSet):
     queryset = Unit.objects.select_related("owner").all().order_by("id")
@@ -141,6 +137,22 @@ class UnitViewSet(viewsets.ModelViewSet):
     ordering_fields = ["id", "code", "tower", "number"]
     ordering = ["id"]
 
+    def perform_update(self, serializer):
+        unit = serializer.save()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="UNIT_UPDATED",
+            details=f"Se actualizó la unidad: {unit.code}"
+        )
+
+    def perform_destroy(self, instance):
+        code = instance.code
+        instance.delete()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="UNIT_DELETED",
+            details=f"Se eliminó la unidad: {code}"
+        )
 
 class ExpenseTypeViewSet(viewsets.ModelViewSet):
     queryset = ExpenseType.objects.all().order_by("id")
@@ -150,6 +162,30 @@ class ExpenseTypeViewSet(viewsets.ModelViewSet):
     search_fields = ["name"]
     ordering_fields = ["id", "name", "amount_default"]
 
+    def perform_create(self, serializer):
+        expense_type = serializer.save()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="EXPENSE_TYPE_CREATED",
+            details=f"Se creó el tipo de expensa: '{expense_type.name}'"
+        )
+    
+    def perform_update(self, serializer):
+        expense_type = serializer.save()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="EXPENSE_TYPE_UPDATED",
+            details=f"Se actualizó el tipo de expensa: '{expense_type.name}'"
+        )
+
+    def perform_destroy(self, instance):
+        name = instance.name
+        instance.delete()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="EXPENSE_TYPE_DELETED",
+            details=f"Se eliminó el tipo de expensa: '{name}'"
+        )
 
 class FeeViewSet(viewsets.ModelViewSet):
     queryset = Fee.objects.select_related("unit", "expense_type", "unit__owner").all()
@@ -196,6 +232,11 @@ class FeeViewSet(viewsets.ModelViewSet):
                     fee.amount = amount_override
                     fee.save(update_fields=["amount"])
                 count += 1
+        ActivityLog.objects.create(
+            user=request.user,
+            action="FEES_ISSUED",
+            details=f"Se emitieron {count} cuotas para el periodo {period}"
+        )        
         return Response({"ok": True, "period": period, "count": count})
 
     @action(detail=True, methods=["post"], permission_classes=[IsAdmin])
@@ -214,7 +255,12 @@ class FeeViewSet(viewsets.ModelViewSet):
         if float(total) >= float(fee.amount):
             fee.status = "PAID"
             fee.save(update_fields=["status"])
-
+        
+        ActivityLog.objects.create(
+            user=request.user,
+            action="FEE_PAID",
+            details=f"Se registró un pago de {amount} para la cuota de {fee.unit.code} ({fee.period})"
+        )
         return Response(PaymentSerializer(p).data, status=201)
 
 
@@ -229,15 +275,6 @@ class NoticeViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
-
-# --- Reporte financiero (CU9) ---
-def is_admin(user):
-    if not user or not user.is_authenticated:
-        return False
-    if hasattr(user, "profile") and getattr(user.profile, "role", "") == "ADMIN":
-        return True
-    return user.is_staff or user.is_superuser
-
 
 class FinanceReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -301,6 +338,31 @@ class CommonAreaViewSet(viewsets.ModelViewSet):
             return [IsAdmin()]
         return super().get_permissions()
 
+    def perform_create(self, serializer):
+        common_area = serializer.save()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="COMMON_AREA_CREATED",
+            details=f"Se creó el área común: {common_area.name}"
+        )
+
+    def perform_update(self, serializer):
+        common_area = serializer.save()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="COMMON_AREA_UPDATED",
+            details=f"Se actualizó el área común: {common_area.name}"
+        )
+
+    def perform_destroy(self, instance):
+        name = instance.name
+        instance.delete()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="COMMON_AREA_DELETED",
+            details=f"Se eliminó el área común: {name}"
+        )
+
 class ReservationViewSet(viewsets.ModelViewSet):
     queryset = Reservation.objects.select_related("area", "user").all()
     serializer_class = ReservationSerializer
@@ -313,9 +375,30 @@ class ReservationViewSet(viewsets.ModelViewSet):
         return super().get_queryset().filter(user=self.request.user).order_by("-start_time")
 
     def perform_create(self, serializer):
-        # Asigna la reserva al usuario que la está creando
-        serializer.save(user=self.request.user)
+        reservation = serializer.save(user=self.request.user)
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="RESERVATION_CREATED",
+            details=f"Se creó una reserva para '{reservation.area.name}' ({reservation.start_time.strftime('%Y-%m-%d %H:%M')})"
+        )
 
+    def perform_update(self, serializer):
+        reservation = serializer.save()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="RESERVATION_UPDATED",
+            details=f"Se actualizó la reserva para '{reservation.area.name}'"
+        )
+
+    def perform_destroy(self, instance):
+        area_name = instance.area.name
+        start_time = instance.start_time
+        instance.delete()
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="RESERVATION_DELETED",
+            details=f"Se eliminó la reserva de '{area_name}' ({start_time.strftime('%Y-%m-%d %H:%M')})"
+        )
 # En core/views.py
 class MaintenanceRequestViewSet(viewsets.ModelViewSet):
     queryset = MaintenanceRequest.objects.all().order_by('-created_at')
@@ -331,13 +414,18 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
         return self.queryset
 
     def perform_create(self, serializer):
-        serializer.save(reported_by=self.request.user)
-
+        maintenance_request = serializer.save(reported_by=self.request.user)
+        ActivityLog.objects.create(
+            user=self.request.user,
+            action="MAINTENANCE_REQUEST_CREATED",
+            details=f"Se creó la solicitud de mantenimiento: '{maintenance_request.title}'"
+        )
     # --- ACCIÓN NUEVA PARA ADMINS ---
     @action(detail=True, methods=['patch'], permission_classes=[IsAdmin])
     def update_status(self, request, pk=None):
         instance = self.get_object()
         new_status = request.data.get('status')
+        old_status = instance.status
 
         # Valida que el estado sea uno de los permitidos
         valid_statuses = [choice[0] for choice in MaintenanceRequest.STATUS_CHOICES]
@@ -346,13 +434,19 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
 
         instance.status = new_status
         instance.save(update_fields=['status'])
-        return Response(self.get_serializer(instance).data)
-    
+        
+        # 👈 Nuevo: Registrar la actualización del estado
+        ActivityLog.objects.create(
+            user=request.user,
+            action="MAINTENANCE_REQUEST_STATUS_UPDATED",
+            details=f"Se actualizó el estado de la solicitud '{instance.title}' de '{old_status}' a '{new_status}'"
+        )   
+        return Response(self.get_serializer(instance).data)  
 # Al final de core/views.py
 
 class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet para que los administradores vean el registro de actividad.
+    Viewset para que los administradores vean el registro de actividad.
     Es de solo lectura.
     """
     queryset = ActivityLog.objects.all()
@@ -360,7 +454,7 @@ class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAdmin]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['user__username', 'action', 'details']
-    ordering_fields = ['timestamp']    
+    ordering_fields = ['timestamp']     
 
     @action(detail=False, methods=['post'], permission_classes=[IsAdmin])
     def create_custom(self, request):
@@ -376,8 +470,6 @@ class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
         )
         return Response(self.get_serializer(log).data, status=201)
     
-# ... (otras clases de views) ...
-
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -385,8 +477,6 @@ class LogoutView(APIView):
         user = request.user
         ActivityLog.objects.create(user=user, action="USER_LOGOUT")
         return Response({"detail": "Sesión cerrada correctamente."})
-
-# ... (al final del archivo) ...
 
 class PageAccessLogView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -402,3 +492,25 @@ class PageAccessLogView(APIView):
             details=f"Accedió a la página: {page_name}"
         )
         return Response({"status": "Registro de acceso a página exitoso."}, status=201)
+    
+class MaintenanceRequestCommentViewSet(viewsets.ModelViewSet):
+    queryset = MaintenanceRequestComment.objects.all()
+    serializer_class = MaintenanceRequestCommentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        # Permite a los usuarios ver comentarios de sus propias solicitudes o a los admins ver todo
+        user = self.request.user
+        if not (user.is_staff or getattr(user.profile, 'role', 'RESIDENT') == 'ADMIN'):
+            return self.queryset.filter(request__reported_by=user)
+        return self.queryset
+    
+    def perform_create(self, serializer):
+        # Asegura que el usuario solo pueda comentar en solicitudes existentes
+        request_id = self.request.data.get('request')
+        try:
+            maintenance_request = MaintenanceRequest.objects.get(id=request_id)
+        except MaintenanceRequest.DoesNotExist:
+            raise serializers.ValidationError("Solicitud de mantenimiento no encontrada.")
+            
+        serializer.save(user=self.request.user, request=maintenance_request)

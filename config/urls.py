@@ -18,6 +18,7 @@ router.register(r"reservations", v.ReservationViewSet)
 router.register(r"maintenance-requests", v.MaintenanceRequestViewSet)
 # En config/urls.py, dentro de los registros del router
 router.register(r"activity-logs", v.ActivityLogViewSet, basename="activitylog")
+router.register(r"maintenance-request-comments", v.MaintenanceRequestCommentViewSet)
 
 urlpatterns = [
     path("admin/", admin.site.urls),

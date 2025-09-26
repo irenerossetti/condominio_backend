@@ -78,6 +78,8 @@ class Reservation(models.Model):
     
 # ... al final de core/models.py
 
+# ... (imports existentes) ...
+
 class MaintenanceRequest(models.Model):
     STATUS_CHOICES = [
         ("PENDING", "Pendiente"),
@@ -90,6 +92,22 @@ class MaintenanceRequest(models.Model):
     unit = models.ForeignKey(Unit, on_delete=models.SET_NULL, null=True, blank=True, related_name="maintenance_requests")
     reported_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="maintenance_requests")
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    # 👈 Nuevos campos
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_maintenance_requests"
+    )
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="completed_maintenance_requests"
+    )
 
     def __str__(self):
         return self.title
@@ -108,3 +126,24 @@ class ActivityLog(models.Model):
     def __str__(self):
         return f'{self.user.username} - {self.action} at {self.timestamp.strftime("%Y-%m-%d %H:%M")}'
         
+# ... (modelos existentes) ...
+
+class MaintenanceRequestComment(models.Model):
+    request = models.ForeignKey(
+        'MaintenanceRequest',
+        on_delete=models.CASCADE,
+        related_name='comments'
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='maintenance_comments'
+    )
+    body = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Comentario de {self.user.username} en solicitud {self.request.id}"        
