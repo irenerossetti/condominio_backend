@@ -89,7 +89,17 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "No se puede eliminar. El usuario es propietario de una o más Unidades."},
                 status=status.HTTP_400_BAD_REQUEST
-            )    
+            )  
+    # 👇 AÑADE ESTA NUEVA FUNCIÓN DENTRO DE UserViewSet
+    @action(detail=False, methods=['get'], permission_classes=[IsAdmin])
+    def staff_members(self, request):
+        """
+        Devuelve una lista de todos los usuarios con el rol de STAFF.
+        Esto crea automáticamente el endpoint GET /api/users/staff_members/
+        """
+        staff_users = User.objects.filter(profile__role='STAFF').order_by('username')
+        serializer = self.get_serializer(staff_users, many=True)
+        return Response(serializer.data)      
 
 class UnitViewSet(viewsets.ModelViewSet):
     queryset = Unit.objects.select_related("owner").all().order_by("id")
