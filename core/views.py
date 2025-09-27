@@ -14,16 +14,17 @@ from .serializers import (
     UserSerializer, UserWithProfileSerializer, AdminUserWriteSerializer,
     ProfileSerializer, MeSerializer, UnitSerializer, ExpenseTypeSerializer,
     FeeSerializer, PaymentSerializer, NoticeSerializer, CommonAreaSerializer,
-    ReservationSerializer, MaintenanceRequestSerializer, ActivityLogSerializer,
+    ReservationSerializer, MaintenanceRequestSerializer, NoticeCategorySerializer, ActivityLogSerializer,
     MaintenanceRequestCommentSerializer, VehicleSerializer, PetSerializer, FamilyMemberSerializer
 )
 from .models import (
-    Profile, Unit, ExpenseType, Fee, Payment, Notice,
+    Profile, Unit, ExpenseType, Fee, Payment, Notice, NoticeCategory,
     CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment,
     Vehicle, Pet, FamilyMember
 )
 from .permissions import IsAdmin, IsOwnerOrAdmin
 from rest_framework import serializers # Importar serializers para la excepción
+from django.utils import timezone 
 
 User = get_user_model()
 
@@ -225,10 +226,33 @@ class FeeViewSet(viewsets.ModelViewSet):
         )
         return Response(PaymentSerializer(p).data, status=201)
 
+# 👇 AÑADE ESTE NUEVO VIEWSET (puede ser antes de NoticeViewSet)
+class NoticeCategoryViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para que los admins gestionen las categorías de los avisos.
+    Los residentes solo pueden leerlas.
+    """
+    queryset = NoticeCategory.objects.all()
+    serializer_class = NoticeCategorySerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
+    def get_permissions(self):
+        # Solo los admins pueden crear, editar o borrar categorías
+        if self.action not in ('list', 'retrieve'):
+            return [IsAdmin()]
+        return super().get_permissions()
+    
 class NoticeViewSet(viewsets.ModelViewSet):
-    queryset = Notice.objects.select_related("created_by").all().order_by("-published_at")
     serializer_class = NoticeSerializer
+
+    def get_queryset(self):
+        """
+        Esta función ahora solo devuelve los avisos cuya fecha de publicación
+        es menor o igual a la fecha y hora actual.
+        """
+        return Notice.objects.filter(
+            publish_date__lte=timezone.now()
+        ).select_related("created_by").order_by("-publish_date")
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):

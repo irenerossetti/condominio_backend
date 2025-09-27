@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 User = settings.AUTH_USER_MODEL
 
@@ -47,14 +48,26 @@ class Payment(models.Model):
     method = models.CharField(max_length=30, default="cash")
     note = models.TextField(blank=True)
 
+class NoticeCategory(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    color = models.CharField(max_length=7, default="#888888", help_text="Color en formato hexadecimal, ej. #FF5733")
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        ordering = ["name"]
+
 class Notice(models.Model):
     title = models.CharField(max_length=120)
     body = models.TextField()
-    published_at = models.DateTimeField(auto_now_add=True)
+    # 👇 Verifica que este campo se llame 'publish_date'
+    publish_date = models.DateTimeField(default=timezone.now)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
-
-    class Meta: ordering = ["-published_at"]
-
+    category = models.ForeignKey(NoticeCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name="notices")
+    class Meta:
+        # 👇 Y que el ordenamiento también use 'publish_date'
+        ordering = ["-publish_date"]
 # ... al final de core/models.py
 
 class CommonArea(models.Model):

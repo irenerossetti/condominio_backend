@@ -27,7 +27,7 @@ class PaymentAdmin(admin.ModelAdmin):
 
 @admin.register(Notice)
 class NoticeAdmin(admin.ModelAdmin):
-    list_display = ("id", "title", "published_at", "created_by")
+    list_display = ("id", "title", "publish_date", "created_by")
     search_fields = ("title", "body")
 
 @admin.register(Profile)

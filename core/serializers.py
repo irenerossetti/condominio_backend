@@ -4,7 +4,7 @@ from django.db import transaction # 👈 Asegúrate de que este import esté al 
 from .models import (
     Profile, Unit, ExpenseType, Fee, Payment, Notice,
     CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment,
-    Vehicle, Pet, FamilyMember # <-- ¡Importante!
+    Vehicle, Pet, FamilyMember, Notice, NoticeCategory # <-- ¡Importante!
 )
 User = get_user_model()
 
@@ -140,14 +140,27 @@ class FeeSerializer(serializers.ModelSerializer):
             "period", "amount", "status", "issued_at", "due_date",
             "payments",
         ]
+# 👇 AÑADE ESTE NUEVO SERIALIZADOR
+class NoticeCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NoticeCategory
+        fields = ["id", "name", "color"]
 
+# 👇 MODIFICA EL NoticeSerializer
 class NoticeSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(source="created_by.username", read_only=True)
+    # 👇 Añade estos dos campos para mostrar los datos de la categoría
+    category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
+    category_color = serializers.CharField(source="category.color", read_only=True, allow_null=True)
 
     class Meta:
         model = Notice
-        fields = ["id", "title", "body", "published_at", "created_by", "created_by_username"]
-        read_only_fields = ["id", "published_at", "created_by", "created_by_username"]
+        # 👇 Añade 'category', 'category_name' y 'category_color' a la lista
+        fields = [
+            "id", "title", "body", "publish_date", "created_by", "created_by_username",
+            "category", "category_name", "category_color"
+        ]
+        read_only_fields = ["id", "created_by", "created_by_username"]
 
 class CommonAreaSerializer(serializers.ModelSerializer):
     class Meta:
