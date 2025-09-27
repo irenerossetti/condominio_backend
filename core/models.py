@@ -10,7 +10,8 @@ class Profile(models.Model):
     phone = models.CharField(max_length=30, blank=True)
     role = models.CharField(max_length=10, choices=ROLE_CHOICES, default="RESIDENT")
     def __str__(self): return f"{self.full_name or self.user.username} ({self.role})"
-
+ 
+coowner_code = models.CharField(max_length=50, null=True, blank=True)
 class Unit(models.Model):
     code = models.CharField(max_length=30, unique=True)   # p.ej. T1-302
     tower = models.CharField(max_length=30)
@@ -146,4 +147,36 @@ class MaintenanceRequestComment(models.Model):
         ordering = ['created_at']
 
     def __str__(self):
-        return f"Comentario de {self.user.username} en solicitud {self.request.id}"        
+        return f"Comentario de {self.user.username} en solicitud {self.request.id}"   
+
+# EN: core/models.py
+
+class Vehicle(models.Model):
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="vehicles")
+    # 👇 AÑADE default='' A ESTA LÍNEA
+    plate = models.CharField(max_length=20, default='', help_text="Placa del vehículo")
+    brand = models.CharField(max_length=50, blank=True, help_text="Marca (ej. Toyota)")
+    model = models.CharField(max_length=50, blank=True, help_text="Modelo (ej. Corolla)")
+    color = models.CharField(max_length=30, blank=True)
+
+    def __str__(self):
+        return f"{self.plate} ({self.owner.username})"
+
+class Pet(models.Model):
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="pets")
+    # 👇 AÑADE default='' A ESTA LÍNEA
+    name = models.CharField(max_length=100, default='')
+    species = models.CharField(max_length=50, blank=True, help_text="Especie (ej. Perro, Gato)")
+    breed = models.CharField(max_length=50, blank=True, help_text="Raza (ej. Labrador)")
+
+    def __str__(self):
+        return f"{self.name} ({self.owner.username})"
+class FamilyMember(models.Model):
+    resident = models.ForeignKey(User, on_delete=models.CASCADE, related_name="family_members")
+    full_name = models.CharField(max_length=200, blank=True, default='')
+    # 👇 AÑADE blank=True Y default='' A ESTA LÍNEA
+    relationship = models.CharField(max_length=50, blank=True, default='', help_text="Parentesco (ej. Esposo/a, Hijo/a)")
+    phone = models.CharField(max_length=30, blank=True)
+
+    def __str__(self):
+        return f"{self.full_name} ({self.relationship} de {self.resident.username})"      

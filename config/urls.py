@@ -19,6 +19,9 @@ router.register(r"maintenance-requests", v.MaintenanceRequestViewSet)
 # En config/urls.py, dentro de los registros del router
 router.register(r"activity-logs", v.ActivityLogViewSet, basename="activitylog")
 router.register(r"maintenance-request-comments", v.MaintenanceRequestCommentViewSet)
+router.register(r"vehicles", v.VehicleViewSet, basename="vehicle")
+router.register(r"pets", v.PetViewSet, basename="pet")
+router.register(r"family-members", v.FamilyMemberViewSet, basename="familymember")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -32,6 +35,8 @@ urlpatterns = [
     path("api/auth/refresh/", TokenRefreshView.as_view()),
     path("api/reports/finance/", v.FinanceReportView.as_view()),  # <-- NUEVO
     # Rutas de DRF y apps
+    path("api/reports/dashboard-stats/", v.DashboardStatsView.as_view()),
+
     path("api/", include(router.urls)),
     path("api/", include("core.urls")),
   #  path("api/", include("todos.urls")),

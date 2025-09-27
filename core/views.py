@@ -1,22 +1,26 @@
 # --- imports (limpios) ---
 import json
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
+from django.db.models import ProtectedError # 👈 AÑADE ESTE IMPORT ARRIBA
+from django.db import IntegrityError # 👈 Añade este import al principio
 from django.contrib.auth import authenticate, get_user_model
-from rest_framework import viewsets, permissions, filters
+from rest_framework import viewsets, permissions, filters, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework import status # 👈 AÑADE ESTE IMPORT ARRIBA
 from .serializers import (
-    UserSerializer, ProfileSerializer, MeSerializer,
-    UserWithProfileSerializer, AdminUserWriteSerializer, UnitSerializer,
-    ExpenseTypeSerializer, FeeSerializer, PaymentSerializer, NoticeSerializer, 
-    CommonAreaSerializer, ReservationSerializer, MaintenanceRequestSerializer, ActivityLogSerializer,
-    MaintenanceRequestCommentSerializer
+    UserSerializer, UserWithProfileSerializer, AdminUserWriteSerializer,
+    ProfileSerializer, MeSerializer, UnitSerializer, ExpenseTypeSerializer,
+    FeeSerializer, PaymentSerializer, NoticeSerializer, CommonAreaSerializer,
+    ReservationSerializer, MaintenanceRequestSerializer, ActivityLogSerializer,
+    MaintenanceRequestCommentSerializer, VehicleSerializer, PetSerializer, FamilyMemberSerializer
 )
 from .models import (
     Profile, Unit, ExpenseType, Fee, Payment, Notice,
-    CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment
+    CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment,
+    Vehicle, Pet, FamilyMember
 )
 from .permissions import IsAdmin, IsOwnerOrAdmin
 from rest_framework import serializers # Importar serializers para la excepción
@@ -30,47 +34,30 @@ class LoginView(APIView):
 
     def post(self, request):
         data = request.data
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except Exception:
-                return Response({"detail": "JSON inválido"}, status=400)
-
         identifier = (data.get("email") or data.get("username") or "").strip()
-        password   = (data.get("password") or "").strip()
+        password = (data.get("password") or "").strip()
         if not identifier or not password:
-            return Response({"detail": "Faltan datos"}, status=400)
+            return Response({"detail": "Faltan credenciales"}, status=400)
 
-        if "@" in identifier:
-            user_obj = User.objects.filter(email__iexact=identifier).first()
-            if not user_obj:
-                return Response({"detail": "Credenciales inválidas"}, status=401)
-            username = user_obj.get_username()
-        else:
-            username = identifier
+        user_lookup = {"email__iexact": identifier} if "@" in identifier else {"username__iexact": identifier}
+        user_obj = User.objects.filter(**user_lookup).first()
+        if not user_obj:
+            return Response({"detail": "Credenciales inválidas"}, status=401)
 
-        user = authenticate(request, username=username, password=password)
+        user = authenticate(request, username=user_obj.username, password=password)
         if not user:
             return Response({"detail": "Credenciales inválidas"}, status=401)
+        
         ActivityLog.objects.create(user=user, action="USER_LOGIN_SUCCESS")
         refresh = RefreshToken.for_user(user)
-        return Response({
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-            "user": {"id": user.id, "username": user.get_username(), "email": user.email},
-        }, status=200)
+        return Response({ "access": str(refresh.access_token), "refresh": str(refresh) })
 
 class MeViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def list(self, request):
-        u = request.user
-        prof = getattr(u, "profile", None)
-        payload = {
-            **UserSerializer(u).data,
-            "profile": ProfileSerializer(prof).data if prof else None,
-        }
-        return Response(MeSerializer(payload).data)
+        serializer = UserWithProfileSerializer(request.user)
+        return Response(serializer.data)
 
     @action(detail=False, methods=["patch"])
     def update_profile(self, request):
@@ -79,54 +66,29 @@ class MeViewSet(viewsets.ViewSet):
         ser.is_valid(raise_exception=True)
         ser.save()
         return Response(ser.data)
-
-    @action(detail=False, methods=["get"])
-    def fees(self, request):
-        qs = Fee.objects.select_related("unit", "expense_type") \
-                        .filter(unit__owner=request.user) \
-                        .order_by("-issued_at")
-        return Response(FeeSerializer(qs, many=True).data)
-
+    
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all().order_by("id")
-    permission_classes = [IsAdmin]
+    queryset = User.objects.prefetch_related('profile', 'vehicles', 'pets', 'family_members').all().order_by("id")
+    permission_classes = [permissions.IsAdminUser]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["username", "email", "first_name", "last_name"]
-    ordering_fields = ["id", "username", "email", "date_joined"]
+    search_fields = ["username", "email"]
     ordering = ["id"]
 
     def get_serializer_class(self):
         if self.action in ("create", "update", "partial_update"):
             return AdminUserWriteSerializer
-        if self.action in ("list", "retrieve"):
-            return UserWithProfileSerializer
-        return UserSerializer
+        return UserWithProfileSerializer
 
-    def perform_create(self, serializer):
-        user = serializer.save()
-        ActivityLog.objects.create(
-            user=self.request.user,
-            action="USER_CREATED",
-            details=f"Se creó el usuario con ID: {user.id}"
-        )
-
-    def perform_destroy(self, instance):
-        username = instance.username
-        user_id = instance.id
-        instance.delete()
-        ActivityLog.objects.create(
-            user=self.request.user,
-            action="USER_DELETED",
-            details=f"Se eliminó el usuario: {username} ({user_id})"
-        )
-
-    def perform_update(self, serializer):
-        user = serializer.save()
-        ActivityLog.objects.create(
-            user=self.request.user,
-            action="USER_UPDATED",
-            details=f"Se actualizó el usuario con ID: {user.id}"
-        )
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        try:
+            instance.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except ProtectedError:
+            return Response(
+                {"detail": "No se puede eliminar. El usuario es propietario de una o más Unidades."},
+                status=status.HTTP_400_BAD_REQUEST
+            )    
 
 class UnitViewSet(viewsets.ModelViewSet):
     queryset = Unit.objects.select_related("owner").all().order_by("id")
@@ -280,6 +242,10 @@ class FinanceReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        # La forma correcta de verificar el permiso
+        is_admin_check = IsAdmin()
+        user_is_admin = is_admin_check.has_permission(request, self)
+
         qs = Fee.objects.select_related("unit", "unit__owner", "expense_type")
 
         p_from = request.query_params.get("from")
@@ -289,7 +255,8 @@ class FinanceReportView(APIView):
         if p_from: qs = qs.filter(period__gte=p_from)
         if p_to:   qs = qs.filter(period__lte=p_to)
 
-        if not is_admin(request.user):
+        # Lógica corregida
+        if not user_is_admin:
             qs = qs.filter(unit__owner=request.user)
         elif owner:
             qs = qs.filter(unit__owner_id=int(owner)) if owner.isdigit() \
@@ -514,3 +481,41 @@ class MaintenanceRequestCommentViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError("Solicitud de mantenimiento no encontrada.")
             
         serializer.save(user=self.request.user, request=maintenance_request)
+
+class DashboardStatsView(APIView):
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        user_count = User.objects.count()
+        unit_count = Unit.objects.count()
+
+        pending_fees = Fee.objects.filter(status__in=["ISSUED", "OVERDUE"]).aggregate(total=Sum('amount'))['total'] or 0
+
+        open_requests = MaintenanceRequest.objects.filter(status__in=["PENDING", "IN_PROGRESS"]).count()
+
+        stats = {
+            "total_users": user_count,
+            "active_units": unit_count,
+            "pending_fees_total": float(pending_fees),
+            "open_maintenance_requests": open_requests,
+        }
+        return Response(stats)
+
+## --- NUEVOS VIEWSETS ---
+class VehicleViewSet(viewsets.ModelViewSet):
+    queryset = Vehicle.objects.all()
+    serializer_class = VehicleSerializer
+    permission_classes = [IsAdmin]
+    def create(self, request, *args, **kwargs):
+        try: return super().create(request, *args, **kwargs)
+        except IntegrityError: return Response({"detail": "Ya existe un vehículo con esta placa."}, status=status.HTTP_400_BAD_REQUEST)
+
+class PetViewSet(viewsets.ModelViewSet):
+    queryset = Pet.objects.all()
+    serializer_class = PetSerializer
+    permission_classes = [IsAdmin]
+
+class FamilyMemberViewSet(viewsets.ModelViewSet):
+    queryset = FamilyMember.objects.all()
+    serializer_class = FamilyMemberSerializer
+    permission_classes = [IsAdmin]

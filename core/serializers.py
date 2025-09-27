@@ -1,20 +1,34 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from django.db import transaction # 👈 Asegúrate de que este import esté al principio del archivo
 from .models import (
     Profile, Unit, ExpenseType, Fee, Payment, Notice,
-    CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment
+    CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment,
+    Vehicle, Pet, FamilyMember # <-- ¡Importante!
 )
-
 User = get_user_model()
 
+# --- Serializers para modelos relacionados ---
+class VehicleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Vehicle
+        fields = '__all__'
+
+class PetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Pet
+        fields = '__all__'
+
+class FamilyMemberSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FamilyMember
+        fields = '__all__'
+# ---------------------------------------------
+# --- Serializers Principales ---
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = [
-            "id", "username", "email", "first_name", "last_name",
-            "is_active", "is_staff", "date_joined",
-        ]
-        read_only_fields = ["id", "is_staff", "date_joined"]
+        fields = ["id", "username", "email", "first_name", "last_name", "is_active", "is_staff", "date_joined"]
 
 class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
@@ -31,11 +45,16 @@ class MeSerializer(serializers.Serializer):
     profile = ProfileSerializer(allow_null=True)
 
 class UserWithProfileSerializer(UserSerializer):
-    profile = ProfileSerializer(read_only=True, allow_null=True)
+    profile = ProfileSerializer(read_only=True)
+    vehicles = VehicleSerializer(many=True, read_only=True)
+    pets = PetSerializer(many=True, read_only=True)
+    family_members = FamilyMemberSerializer(many=True, read_only=True)
 
     class Meta(UserSerializer.Meta):
-        fields = UserSerializer.Meta.fields + ["profile"]
+        fields = UserSerializer.Meta.fields + ["profile", "vehicles", "pets", "family_members"]
 
+
+# 👇 REEMPLAZA TODA TU CLASE AdminUserWriteSerializer CON ESTO
 class AdminUserWriteSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -44,42 +63,44 @@ class AdminUserWriteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = [
-            "id", "username", "email", "password",
-            "first_name", "last_name", "is_active",
-            "full_name", "phone", "role",
-        ]
-        read_only_fields = ["id"]
+        fields = ["id", "username", "email", "password", "full_name", "phone", "role", "is_active"]
+        extra_kwargs = {
+            'username': {'required': False},
+            'email': {'required': False},
+        }
 
-    def create(self, validated):
-        profile_data = {k: validated.pop(k, None) for k in ("full_name", "phone", "role")}
-        password = validated.pop("password", None)
+    @transaction.atomic
+    def create(self, validated_data):
+        profile_data = {
+            "full_name": validated_data.pop("full_name", ""),
+            "phone": validated_data.pop("phone", ""),
+            "role": validated_data.pop("role", "RESIDENT"),
+        }
+        password = validated_data.pop("password", None)
+        user_instance = User.objects.create_user(**validated_data, password=password)
+        Profile.objects.create(user=user_instance, **profile_data)
+        return user_instance
 
-        user = User(**validated)
-        user.set_password(password or User.objects.make_random_password())
-        user.save()
-
-        defaults = {k: v for k, v in profile_data.items() if v is not None}
-        if defaults:
-            Profile.objects.update_or_create(user=user, defaults=defaults)
-        return user
-
-    def update(self, instance, validated):
-        profile_data = {k: validated.pop(k, None) for k in ("full_name", "phone", "role")}
-        password = validated.pop("password", None)
-
-        for k, v in validated.items():
-            setattr(instance, k, v)
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        # Actualiza el modelo User
+        instance.username = validated_data.get('username', instance.username)
+        instance.email = validated_data.get('email', instance.email)
+        instance.is_active = validated_data.get('is_active', instance.is_active)
+        
+        password = validated_data.get('password')
         if password:
             instance.set_password(password)
+        
         instance.save()
 
-        if any(v is not None for v in profile_data.values()):
-            prof, _ = Profile.objects.get_or_create(user=instance)
-            for k, v in profile_data.items():
-                if v is not None:
-                    setattr(prof, k, v)
-            prof.save()
+        # Actualiza o crea el modelo Profile
+        profile_instance, _ = Profile.objects.get_or_create(user=instance)
+        profile_instance.full_name = validated_data.get('full_name', profile_instance.full_name)
+        profile_instance.phone = validated_data.get('phone', profile_instance.phone)
+        profile_instance.role = validated_data.get('role', profile_instance.role)
+        profile_instance.save()
+
         return instance
 
 class UnitSerializer(serializers.ModelSerializer):
