@@ -4,27 +4,33 @@ from django.db.models import Sum, Count, Q
 from django.db.models import ProtectedError # 👈 AÑADE ESTE IMPORT ARRIBA
 from django.db import IntegrityError # 👈 Añade este import al principio
 from django.contrib.auth import authenticate, get_user_model
+from django.utils import timezone 
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status # 👈 AÑADE ESTE IMPORT ARRIBA
+from rest_framework.parsers import MultiPartParser, FormParser # 👈 ASEGÚRATE DE QUE ESTÉ
+from rest_framework.exceptions import PermissionDenied # 👈 Y ESTE TAMBIÉN
+
 from .serializers import (
-    UserSerializer, UserWithProfileSerializer, AdminUserWriteSerializer,
-    ProfileSerializer, MeSerializer, UnitSerializer, ExpenseTypeSerializer,
-    FeeSerializer, PaymentSerializer, NoticeSerializer, CommonAreaSerializer,
-    ReservationSerializer, MaintenanceRequestSerializer, NoticeCategorySerializer, ActivityLogSerializer,
-    MaintenanceRequestCommentSerializer, VehicleSerializer, PetSerializer, FamilyMemberSerializer
+    ActivityLogSerializer, AdminUserWriteSerializer, CommonAreaSerializer,
+    ExpenseTypeSerializer, FamilyMemberSerializer, FeeSerializer,
+    MaintenanceRequestCommentSerializer, MaintenanceRequestSerializer,
+    MeSerializer, NoticeCategorySerializer, NoticeSerializer,
+    NotificationSerializer, MaintenanceRequestAttachmentSerializer,
+    PaymentSerializer, PetSerializer, ProfileSerializer, ReservationSerializer,
+    UnitSerializer, UserSerializer, UserWithProfileSerializer, VehicleSerializer
 )
 from .models import (
-    Profile, Unit, ExpenseType, Fee, Payment, Notice, NoticeCategory,
-    CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment,
-    Vehicle, Pet, FamilyMember
+    ActivityLog, CommonArea, ExpenseType, FamilyMember, Fee, MaintenanceRequest,
+    MaintenanceRequestComment, Notice, NoticeCategory, Notification,
+    Payment, Pet, Profile, Reservation, Unit, Vehicle, MaintenanceRequestAttachment 
 )
 from .permissions import IsAdmin, IsOwnerOrAdmin
 from rest_framework import serializers # Importar serializers para la excepción
-from django.utils import timezone 
+
 
 User = get_user_model()
 
@@ -421,30 +427,50 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
             action="MAINTENANCE_REQUEST_CREATED",
             details=f"Se creó la solicitud de mantenimiento: '{maintenance_request.title}'"
         )
-    # --- ACCIÓN NUEVA PARA ADMINS ---
+        
+        # --- LÓGICA DE NOTIFICACIÓN CORREGIDA ---
+        admins = User.objects.filter(profile__role='ADMIN')
+        for admin in admins:
+            if admin != self.request.user: # No notificarse a uno mismo
+                Notification.objects.create(
+                    user=admin,
+                    message=f"Nueva solicitud de {self.request.user.username}: '{maintenance_request.title}'",
+                    link="/maintenance"
+                )   
+
     @action(detail=True, methods=['patch'], permission_classes=[IsAdmin])
     def update_status(self, request, pk=None):
         instance = self.get_object()
         new_status = request.data.get('status')
-        old_status = instance.status
+        old_status_display = instance.get_status_display()
 
-        # Valida que el estado sea uno de los permitidos
         valid_statuses = [choice[0] for choice in MaintenanceRequest.STATUS_CHOICES]
         if new_status not in valid_statuses:
             return Response({'detail': 'Estado no válido.'}, status=400)
 
         instance.status = new_status
-        instance.save(update_fields=['status'])
+        fields_to_update = ['status']
+        if new_status == 'COMPLETED':
+            instance.completed_by = request.user
+            instance.completed_at = timezone.now()
+            fields_to_update.extend(['completed_by', 'completed_at'])
+        instance.save(update_fields=fields_to_update)
         
-        # 👈 Nuevo: Registrar la actualización del estado
+        # Notificar al dueño del ticket sobre el cambio de estado
+        if instance.reported_by != request.user:
+            Notification.objects.create(
+                user=instance.reported_by,
+                message=f"El estado de tu solicitud '{instance.title}' cambió a: {instance.get_status_display()}",
+                link="/maintenance"
+            )
+        
         ActivityLog.objects.create(
             user=request.user,
             action="MAINTENANCE_REQUEST_STATUS_UPDATED",
-            details=f"Se actualizó el estado de la solicitud '{instance.title}' de '{old_status}' a '{new_status}'"
-        )   
-        return Response(self.get_serializer(instance).data)  
-# Al final de core/views.py
-
+            details=f"Estado de '{instance.title}' cambiado de '{old_status_display}' a '{instance.get_status_display()}'"
+        )
+        return Response(self.get_serializer(instance).data)
+    
 class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Viewset para que los administradores vean el registro de actividad.
@@ -500,21 +526,45 @@ class MaintenanceRequestCommentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        # Permite a los usuarios ver comentarios de sus propias solicitudes o a los admins ver todo
         user = self.request.user
         if not (user.is_staff or getattr(user.profile, 'role', 'RESIDENT') == 'ADMIN'):
             return self.queryset.filter(request__reported_by=user)
         return self.queryset
     
     def perform_create(self, serializer):
-        # Asegura que el usuario solo pueda comentar en solicitudes existentes
         request_id = self.request.data.get('request')
         try:
             maintenance_request = MaintenanceRequest.objects.get(id=request_id)
         except MaintenanceRequest.DoesNotExist:
             raise serializers.ValidationError("Solicitud de mantenimiento no encontrada.")
-            
-        serializer.save(user=self.request.user, request=maintenance_request)
+        comment = serializer.save(user=self.request.user, request=maintenance_request)
+        request_owner = comment.request.reported_by
+        assigned_worker = comment.request.assigned_to
+        commenter = self.request.user
+        if commenter == request_owner:
+            if assigned_worker and assigned_worker != commenter:
+                Notification.objects.create(
+                    user=assigned_worker,
+                    message=f"{commenter.username} comentó en una tarea asignada.",
+                    link="/maintenance"
+                )
+            else:
+                admins = User.objects.filter(profile__role='ADMIN')
+                for admin in admins:
+                    if admin != commenter:
+                        Notification.objects.create(
+                            user=admin,
+                            message=f"{commenter.username} comentó en '{comment.request.title}'.",
+                            link="/maintenance"
+                        )
+        else:
+            if request_owner != commenter:
+                Notification.objects.create(
+                    user=request_owner,
+                    message=f"{commenter.username} comentó en tu solicitud: '{comment.request.title}'",
+                    link="/maintenance"
+                )
+
 
 class DashboardStatsView(APIView):
     permission_classes = [IsAdmin]
@@ -553,3 +603,38 @@ class FamilyMemberViewSet(viewsets.ModelViewSet):
     queryset = FamilyMember.objects.all()
     serializer_class = FamilyMemberSerializer
     permission_classes = [IsAdmin]
+
+# 👇 Añade este nuevo ViewSet
+class NotificationViewSet(viewsets.ModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user)
+
+    @action(detail=False, methods=['post'])
+    def mark_all_as_read(self, request):
+        self.get_queryset().update(is_read=True)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+# --- 👇 AÑADE ESTA CLASE COMPLETA AL FINAL ---
+class MaintenanceRequestAttachmentViewSet(viewsets.ModelViewSet):
+    queryset = MaintenanceRequestAttachment.objects.all()
+    serializer_class = MaintenanceRequestAttachmentSerializer
+    # Le decimos a la vista que puede manejar la subida de archivos
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [permissions.IsAuthenticated] # Solo usuarios logueados pueden subir
+
+    def perform_create(self, serializer):
+        # Asegurarnos que el usuario que sube el archivo sea el que reportó
+        # la solicitud o un administrador.
+        request_id = self.request.data.get('request')
+        maintenance_request = MaintenanceRequest.objects.get(id=request_id)
+        user = self.request.user
+
+        if maintenance_request.reported_by != user and not (user.is_staff or getattr(user.profile, 'role', '') == 'ADMIN'):
+            raise PermissionDenied("No tienes permiso para adjuntar archivos a esta solicitud.")
+        
+        serializer.save()
+
+

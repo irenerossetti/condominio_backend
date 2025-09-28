@@ -176,3 +176,8 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
+
+# --- 👇 AÑADE ESTO AL FINAL DEL ARCHIVO ---
+# Configuración para la subida de archivos de usuario (fotos, etc.)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'

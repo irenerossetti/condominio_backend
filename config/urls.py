@@ -3,8 +3,9 @@ from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-
 from core import views as v
+from django.conf import settings # 👈 Importa settings
+from django.conf.urls.static import static # 👈 Importa static
 
 router = DefaultRouter()
 router.register(r"me", v.MeViewSet, basename="me")
@@ -23,6 +24,8 @@ router.register(r"maintenance-request-comments", v.MaintenanceRequestCommentView
 router.register(r"vehicles", v.VehicleViewSet, basename="vehicle")
 router.register(r"pets", v.PetViewSet, basename="pet")
 router.register(r"family-members", v.FamilyMemberViewSet, basename="familymember")
+router.register(r"notifications", v.NotificationViewSet, basename="notification")
+router.register(r"maintenance-attachments", v.MaintenanceRequestAttachmentViewSet, basename="maintenanceattachment")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -42,3 +45,6 @@ urlpatterns = [
     path("api/", include("core.urls")),
   #  path("api/", include("todos.urls")),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

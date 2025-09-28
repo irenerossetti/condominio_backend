@@ -1,10 +1,12 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+
+from django.db.models import Q
 from django.db import transaction # 👈 Asegúrate de que este import esté al principio del archivo
 from .models import (
     Profile, Unit, ExpenseType, Fee, Payment, Notice,
     CommonArea, Reservation, MaintenanceRequest, ActivityLog, MaintenanceRequestComment,
-    Vehicle, Pet, FamilyMember, Notice, NoticeCategory # <-- ¡Importante!
+    Vehicle, Pet, FamilyMember, NoticeCategory, Notification, MaintenanceRequestAttachment  # <-- ¡Añadido aquí!
 )
 User = get_user_model()
 
@@ -146,10 +148,15 @@ class NoticeCategorySerializer(serializers.ModelSerializer):
         model = NoticeCategory
         fields = ["id", "name", "color"]
 
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['id', 'message', 'is_read', 'created_at', 'link']
+
 # 👇 MODIFICA EL NoticeSerializer
 class NoticeSerializer(serializers.ModelSerializer):
+    # ... (el resto de tu NoticeSerializer se queda igual)
     created_by_username = serializers.CharField(source="created_by.username", read_only=True)
-    # 👇 Añade estos dos campos para mostrar los datos de la categoría
     category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
     category_color = serializers.CharField(source="category.color", read_only=True, allow_null=True)
 
@@ -167,6 +174,7 @@ class CommonAreaSerializer(serializers.ModelSerializer):
         model = CommonArea
         fields = ["id", "name", "description", "capacity", "is_active"]
 
+# 👇 REEMPLAZA ESTA CLASE COMPLETA
 class ReservationSerializer(serializers.ModelSerializer):
     area_name = serializers.CharField(source="area.name", read_only=True)
     user_username = serializers.CharField(source="user.username", read_only=True)
@@ -178,6 +186,44 @@ class ReservationSerializer(serializers.ModelSerializer):
             "start_time", "end_time", "notes", "created_at"
         ]
         read_only_fields = ["user", "created_at"]
+
+    def validate(self, data):
+        """
+        Validación para prevenir el solapamiento de reservas (double-booking).
+        """
+        # Obtenemos los datos, usando los del objeto existente si es una actualización
+        start_time = data.get('start_time', getattr(self.instance, 'start_time', None))
+        end_time = data.get('end_time', getattr(self.instance, 'end_time', None))
+        area = data.get('area', getattr(self.instance, 'area', None))
+
+        if not all([start_time, end_time, area]):
+            # Si falta algún dato clave, dejamos que las validaciones por defecto se encarguen.
+            return data
+
+        if start_time >= end_time:
+            raise serializers.ValidationError("La hora de finalización debe ser posterior a la hora de inicio.")
+
+        # Lógica de comprobación de conflictos
+        conflicting_reservations = Reservation.objects.filter(
+            area=area,
+            # El conflicto existe si:
+            # 1. La nueva reserva empieza durante otra reserva.
+            # 2. La nueva reserva termina durante otra reserva.
+            # 3. La nueva reserva envuelve completamente a otra reserva.
+            start_time__lt=end_time,
+            end_time__gt=start_time
+        )
+        
+        # Si estamos actualizando, debemos excluir la propia reserva de la comprobación
+        if self.instance:
+            conflicting_reservations = conflicting_reservations.exclude(pk=self.instance.pk)
+
+        if conflicting_reservations.exists():
+            raise serializers.ValidationError(
+                "Este horario ya está ocupado para el área seleccionada. Por favor, elige otro."
+            )
+            
+        return data
 
 class ActivityLogSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source="user.username", read_only=True)
@@ -196,15 +242,26 @@ class MaintenanceRequestCommentSerializer(serializers.ModelSerializer):
         fields = ['id', 'request', 'user', 'user_username', 'body', 'created_at']
         read_only_fields = ['user', 'request']
 
+# 👇 AÑADE ESTA NUEVA CLASE
+class MaintenanceRequestAttachmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MaintenanceRequestAttachment
+        fields = ['id', 'file', 'uploaded_at']
+
 class MaintenanceRequestSerializer(serializers.ModelSerializer):
     unit_code = serializers.CharField(source="unit.code", read_only=True)
     reported_by_username = serializers.CharField(source="reported_by.username", read_only=True)
     assigned_to_username = serializers.CharField(source="assigned_to.username", read_only=True)
     completed_by_username = serializers.CharField(source="completed_by.username", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    priority_display = serializers.CharField(source="get_priority_display", read_only=True)
     comments = MaintenanceRequestCommentSerializer(many=True, read_only=True)
+    
+    # 👇 AÑADE ESTA LÍNEA para mostrar los archivos adjuntos
+    attachments = MaintenanceRequestAttachmentSerializer(many=True, read_only=True)
 
     class Meta:
         model = MaintenanceRequest
-        fields = '__all__'
+        fields = '__all__' # fields = '__all__' ya incluye el nuevo campo 'attachments'
         read_only_fields = ['reported_by']
+      
