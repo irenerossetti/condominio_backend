@@ -1,7 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-
+from django.utils import timezone
 from django.db.models import Q
+from django.db.models import Sum
 from django.db import transaction # 👈 Asegúrate de que este import esté al principio del archivo
 from .models import (
     Profile, Unit, ExpenseType, Fee, Payment, Notice,
@@ -127,21 +128,38 @@ class PaymentSerializer(serializers.ModelSerializer):
         fields = ["id", "amount", "paid_at", "method", "note"]
 
 class FeeSerializer(serializers.ModelSerializer):
+    # Campos de solo lectura para mostrar información extra
     unit_code = serializers.CharField(source="unit.code", read_only=True)
     owner_username = serializers.CharField(source="unit.owner.username", read_only=True)
-    owner_id = serializers.IntegerField(source="unit.owner_id", read_only=True)
     expense_type_name = serializers.CharField(source="expense_type.name", read_only=True)
     payments = PaymentSerializer(many=True, read_only=True)
+    total_paid = serializers.SerializerMethodField()
 
     class Meta:
         model = Fee
+        # Lista de campos que se van a usar. 'unit' y 'expense_type' esperan un ID al crear.
         fields = [
-            "id", "unit", "unit_code", "owner_username",
-            "owner_id", "owner_username", 
-            "expense_type", "expense_type_name",
-            "period", "amount", "status", "issued_at", "due_date",
+            "id",
+            "unit", 
+            "unit_code",
+            "owner_username",
+            "expense_type",
+            "expense_type_name",
+            "period",
+            "amount",
+            "status",
+            "issued_at",
+            "due_date",
             "payments",
+            "total_paid",
         ]
+        # Campos que el backend debe calcular y el usuario no debe poder enviar
+        read_only_fields = ["id", "status", "issued_at"]
+
+    def get_total_paid(self, obj):
+        """Calcula el total pagado para una cuota."""
+        return obj.payments.aggregate(total=Sum('amount'))['total'] or 0
+
 # 👇 AÑADE ESTE NUEVO SERIALIZADOR
 class NoticeCategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -188,40 +206,31 @@ class ReservationSerializer(serializers.ModelSerializer):
         read_only_fields = ["user", "created_at"]
 
     def validate(self, data):
-        """
-        Validación para prevenir el solapamiento de reservas (double-booking).
-        """
-        # Obtenemos los datos, usando los del objeto existente si es una actualización
         start_time = data.get('start_time', getattr(self.instance, 'start_time', None))
         end_time = data.get('end_time', getattr(self.instance, 'end_time', None))
         area = data.get('area', getattr(self.instance, 'area', None))
 
         if not all([start_time, end_time, area]):
-            # Si falta algún dato clave, dejamos que las validaciones por defecto se encarguen.
             return data
 
         if start_time >= end_time:
-            raise serializers.ValidationError("La hora de finalización debe ser posterior a la hora de inicio.")
+            raise serializers.ValidationError("La hora de finalización debe ser posterior a la de inicio.")
+        
+        if start_time < timezone.now():
+            raise serializers.ValidationError("No se pueden crear o modificar reservas en el pasado.")
 
-        # Lógica de comprobación de conflictos
-        conflicting_reservations = Reservation.objects.filter(
+        # Lógica para detectar solapamiento
+        conflicting = Reservation.objects.filter(
             area=area,
-            # El conflicto existe si:
-            # 1. La nueva reserva empieza durante otra reserva.
-            # 2. La nueva reserva termina durante otra reserva.
-            # 3. La nueva reserva envuelve completamente a otra reserva.
             start_time__lt=end_time,
             end_time__gt=start_time
         )
         
-        # Si estamos actualizando, debemos excluir la propia reserva de la comprobación
-        if self.instance:
-            conflicting_reservations = conflicting_reservations.exclude(pk=self.instance.pk)
+        if self.instance: # Si es una actualización, excluimos la propia reserva
+            conflicting = conflicting.exclude(pk=self.instance.pk)
 
-        if conflicting_reservations.exists():
-            raise serializers.ValidationError(
-                "Este horario ya está ocupado para el área seleccionada. Por favor, elige otro."
-            )
+        if conflicting.exists():
+            raise serializers.ValidationError("Este horario ya está ocupado. Por favor, elige otro.")
             
         return data
 

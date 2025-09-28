@@ -40,7 +40,9 @@ urlpatterns = [
     path("api/reports/finance/", v.FinanceReportView.as_view()),  # <-- NUEVO
     # Rutas de DRF y apps
     path("api/reports/dashboard-stats/", v.DashboardStatsView.as_view()),
-
+    path("api/fees/<int:fee_id>/create-payment-preference/", v.FeePaymentPreferenceView.as_view()),
+    path("api/payments/webhook/mercadopago/", v.MercadoPagoWebhookView.as_view()),
+    
     path("api/", include(router.urls)),
     path("api/", include("core.urls")),
   #  path("api/", include("todos.urls")),

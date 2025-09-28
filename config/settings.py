@@ -181,3 +181,5 @@ SIMPLE_JWT = {
 # Configuración para la subida de archivos de usuario (fotos, etc.)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+MERCADOPAGO_ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
